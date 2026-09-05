@@ -1,3 +1,68 @@
+> [!IMPORTANT]
+> ## This is a fork, not upstream libfprint
+>
+> **Upstream [libfprint][Upstream] `v1.94.100`, plus the community `goodixtls`
+> drivers for Goodix TLS fingerprint sensors** — `27c6:5110`, `27c6:521d` and
+> `27c6:538d`. All three are on upstream's *unsupported devices* list, so
+> stock libfprint will not drive them.
+>
+> The drivers come from [infinytum/libfprint][Source], which stopped at
+> libfprint `v1.94.1` in 2021 and had drifted five years behind upstream. This
+> fork carries the same drivers on a current base, so it builds against a
+> current `fprintd` without patching version strings or back-filling enums.
+>
+> ### What changed relative to the source fork
+>
+> - Rebuilt on `v1.94.100` instead of `v1.94.1`. The driver sources are imported
+>   verbatim; only the build-system integration was rewritten, since upstream
+>   merged `default_drivers` and `driver_helper_mapping` into a single
+>   `drivers_info` dict.
+> - **Fixed the incompatible pointer types** that downstream packages worked
+>   around with `-Wno-incompatible-pointer-types`. These were type errors, not
+>   logic errors, so generated code is unchanged — but the suppression is no
+>   longer needed, and no longer hides anything new.
+> - **`goodixtls52xd` accepts any `GFUSB_GM168SEC_APP_` firmware.** The driver
+>   gated on an exact `strcmp` against `…_10019`, the build the public firmware
+>   dump ships. Windows provisions `…_10034` on the same hardware, so a sensor
+>   that has ever run the Windows stack failed the check and aborted before
+>   reaching the PSK handshake.
+> - `data/autosuspend.hwdb` is regenerated from the generator rather than
+>   hand-edited, so it stays consistent with `fprint-list-udev-hwdb.c` and with
+>   `tests/test-generated-hwdb.sh`.
+> - Fixed an unrelated upstream bug: `v1.94.100` cannot configure with
+>   `-Dintrospection=false`, because `tests/meson.build` iterates a dict with a
+>   single loop variable.
+>
+> ### Status — read before relying on this
+>
+> - **Only `goodixtls52xd` (`27c6:521d`) is built and exercised**, on a single
+>   machine. `goodixtls511` and `goodixtls53xd` are carried for provenance: they
+>   compile, and that is all that is known about them here.
+> - **These drivers terminate the sensor's TLS channel with a pre-shared key,
+>   and expect that PSK to be all zero bytes.** Anyone with brief physical
+>   access to the USB device can therefore capture the image stream. Weigh that
+>   before wiring fingerprint auth into `sudo` or `polkit`.
+> - Known unfixed bug, inherited and left alone deliberately: in `goodix52xd.c`
+>   and `goodix53xd.c`, `guint16 payload = {0x05, 0x03};` initializes a *scalar*
+>   from a braced list, so it is `0x0005` and the `0x03` is silently dropped.
+>   Fixing it would change what is written to sensor register `556`, which needs
+>   testing against real hardware first.
+> - Not upstreamable as-is, and not submitted. No support is offered.
+>
+> ### Building just this driver
+>
+> ```sh
+> meson setup build -Ddrivers=goodixtls52xd -Dintrospection=false -Ddoc=false -Dgtk-examples=false
+> ninja -C build
+> ```
+>
+> Packaged for NixOS in [arsfeld/nixos][Packaging].
+>
+> [Upstream]: https://gitlab.freedesktop.org/libfprint/libfprint
+> [Source]: https://github.com/infinytum/libfprint
+> [Packaging]: https://github.com/arsfeld/nixos/tree/master/packages/libfprint-goodix-521d
+
+---
 
 
 <div align="center">
