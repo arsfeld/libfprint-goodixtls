@@ -178,7 +178,7 @@ void goodix_receive_preset_psk_read(FpDevice *dev, guint8 *data, guint16 length,
     return;
   }
   
-  GoodixPresetPskResponse* response = data + sizeof(guint8);
+  GoodixPresetPskResponse* response = (GoodixPresetPskResponse*) (data + sizeof(guint8));
   psk_len = response->length;
   if (length < psk_len + sizeof(guint8) + sizeof(GoodixPresetPskResponse)) {
     g_set_error(&error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
