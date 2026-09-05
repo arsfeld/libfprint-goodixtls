@@ -25,6 +25,11 @@
 #define GOODIX_52XD_EP_OUT (0x1 | FPI_USB_ENDPOINT_OUT)
 
 #define GOODIX_52XD_FIRMWARE_VERSION ("GFUSB_GM168SEC_APP_10019")
+/* Firmware builds this driver is known to speak to. 10019 is the image the
+ * public goodix-firmware dump ships; Windows provisions 10034. The protocol
+ * is the same across the GFUSB_GM168SEC_APP_ series, so gate on the prefix
+ * rather than on one exact build. */
+#define GOODIX_52XD_FIRMWARE_PREFIX ("GFUSB_GM168SEC_APP_")
 
 #define GOODIX_52XD_PSK_FLAGS (0xbb020001)
 

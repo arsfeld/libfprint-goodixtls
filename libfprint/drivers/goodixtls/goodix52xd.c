@@ -103,7 +103,8 @@ static void check_firmware_version(FpDevice *dev, gchar *firmware,
 
   fp_dbg("Device firmware: \"%s\"", firmware);
 
-  if (strcmp(firmware, GOODIX_52XD_FIRMWARE_VERSION)) {
+  if (strncmp(firmware, GOODIX_52XD_FIRMWARE_PREFIX,
+              strlen(GOODIX_52XD_FIRMWARE_PREFIX))) {
     g_set_error(&error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
                 "Invalid device firmware: \"%s\"", firmware);
     fpi_ssm_mark_failed(user_data, error);
