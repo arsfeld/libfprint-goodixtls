@@ -1002,7 +1002,7 @@ static void fpi_device_goodixtls52xd_class_init(
   // and enroll more presses so more of the finger is covered.
   img_dev_class->image_to_sample = dev_image_to_sample;
   img_dev_class->match_samples = dev_match_samples;
-  dev_class->nr_enroll_stages = 12;
+  dev_class->nr_enroll_stages = 8;
 
   fpi_device_class_auto_initialize_features(dev_class);
 }

@@ -48,7 +48,7 @@
 > - **`goodixtls52xd` matches by image correlation instead of NBIS**, through
 >   two new optional `FpImageDeviceClass` vfuncs (`image_to_sample`,
 >   `match_samples`). Drivers that do not set them are unaffected. Enrollment
->   takes 12 presses.
+>   takes 8 presses.
 >
 > ### Status — read before relying on this
 >
@@ -68,11 +68,11 @@
 >   convenience-level, not a lock.** The sensor window is 64x80 px (roughly
 >   3x4 mm): too small for NBIS (0-8 minutiae per image, bozorth3 scores 0/24),
 >   so the driver matches images directly. Measured offline on one person
->   (79 presses over two days, 12 enrolled presses): roughly 1 in 4 genuine
->   presses is rejected after a real, consecutive enrollment; about 4% of
->   index/middle finger presses and about 15% of the *other thumb's* presses
->   are accepted. Another person's thumb should be assumed to have a similar
->   chance. Vary the finger position across the 12 enrollment presses.
+>   (79 presses over two days, 8 consecutive enrolled presses): roughly 1 in
+>   5 genuine presses is rejected; no index or middle finger press was
+>   accepted, but about 18% of the *other thumb's* presses were. Another
+>   person's thumb should be assumed to have a similar chance. Vary the
+>   finger position across the 8 enrollment presses.
 > - Not upstreamable as-is, and not submitted. No support is offered.
 >
 > ### Building just this driver
