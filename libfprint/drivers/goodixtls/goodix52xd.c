@@ -39,6 +39,7 @@
 #include "goodix.h"
 #include "goodix_proto.h"
 #include "goodix52xd.h"
+#include "goodix52xd_match.h"
 
 #include <math.h>
 
@@ -62,6 +63,9 @@ struct _FpiDeviceGoodixTls52XD {
   GSList* frames;
 
   Goodix52xdPix empty_img[GOODIX52XD_FRAME_SIZE];
+
+  // Raw (12-bit) average of the frames of the last capture, for matching
+  float last_frame[GOODIX52XD_FRAME_SIZE];
 
   // Set while deactivating, so the finger-off poll stops
   gboolean deactivating;
@@ -587,6 +591,13 @@ static void scan_on_read_img(FpDevice* dev, guint8* data, guint16 len,
             }
         }
 
+        memset(self->last_frame, 0, sizeof(self->last_frame));
+        for (GSList* l = raw_frames; l; l = l->next)
+            for (int i = 0; i < GOODIX52XD_FRAME_SIZE; i++)
+                self->last_frame[i] += ((Goodix52xdPix*) l->data)[i];
+        for (int i = 0; i < GOODIX52XD_FRAME_SIZE; i++)
+            self->last_frame[i] /= g_slist_length(raw_frames);
+
         g_slist_free_full(frames, g_free);
         g_slist_free_full(self->frames, g_free);
         self->frames = g_slist_alloc();
@@ -871,6 +882,89 @@ static void dev_deactivate(FpImageDevice *img_dev) {
 
 // ---- DEV SECTION END ----
 
+// ---- MATCH SECTION START ----
+
+// A sample is the raw average frame of one capture, scaled by 16 to keep
+// some sub-LSB precision: (version, width, height, pixels).
+#define GOODIX52XD_SAMPLE_VERSION 1
+#define GOODIX52XD_SAMPLE_TYPE "(yqqaq)"
+#define GOODIX52XD_SAMPLE_FORMAT "(yqq@aq)"
+
+static GVariant* dev_image_to_sample(FpImageDevice* img_dev, FpImage* image,
+                                     GError** error)
+{
+    FpiDeviceGoodixTls52XD* self = FPI_DEVICE_GOODIXTLS52XD(img_dev);
+    guint16 px[GOODIX52XD_FRAME_SIZE];
+
+    for (int i = 0; i < GOODIX52XD_FRAME_SIZE; i++)
+        px[i] = (guint16) lrintf(CLAMP(self->last_frame[i] * 16, 0, G_MAXUINT16));
+
+    return g_variant_new(GOODIX52XD_SAMPLE_FORMAT, GOODIX52XD_SAMPLE_VERSION,
+                         GOODIX52XD_WIDTH, GOODIX52XD_HEIGHT,
+                         g_variant_new_fixed_array(G_VARIANT_TYPE_UINT16, px,
+                                                   GOODIX52XD_FRAME_SIZE,
+                                                   sizeof(guint16)));
+}
+
+static float* sample_to_frame(GVariant* sample)
+{
+    g_autoptr(GVariant) pixels = NULL;
+    const guint16* px;
+    guint8 version;
+    guint16 width, height;
+    gsize n;
+    float* frame;
+
+    if (!g_variant_is_of_type(sample, G_VARIANT_TYPE(GOODIX52XD_SAMPLE_TYPE)))
+        return NULL;
+    g_variant_get(sample, GOODIX52XD_SAMPLE_FORMAT, &version, &width, &height,
+                  &pixels);
+    px = g_variant_get_fixed_array(pixels, &n, sizeof(guint16));
+    if (version != GOODIX52XD_SAMPLE_VERSION || width != GOODIX52XD_WIDTH ||
+        height != GOODIX52XD_HEIGHT || n != GOODIX52XD_FRAME_SIZE)
+        return NULL;
+
+    frame = g_new(float, n);
+    for (gsize i = 0; i < n; i++)
+        frame[i] = px[i] / 16.0f;
+    return frame;
+}
+
+static FpiMatchResult dev_match_samples(FpImageDevice* img_dev,
+                                        GVariant* enrolled, GVariant* probe,
+                                        GError** error)
+{
+    g_autoptr(GPtrArray) frames = g_ptr_array_new_with_free_func(g_free);
+    g_autofree float* probe_frame = sample_to_frame(probe);
+    GVariantIter iter;
+    GVariant* child;
+    double score;
+
+    if (!probe_frame)
+        return FPI_MATCH_FAIL;
+
+    g_variant_iter_init(&iter, enrolled);
+    while ((child = g_variant_iter_next_value(&iter))) {
+        g_autoptr(GVariant) sample = g_variant_get_variant(child);
+        float* frame = sample_to_frame(sample);
+
+        if (frame)
+            g_ptr_array_add(frames, frame);
+        g_variant_unref(child);
+    }
+    if (frames->len == 0)
+        return FPI_MATCH_FAIL;
+
+    score = goodix52xd_match_score((const float* const*) frames->pdata,
+                                   frames->len, probe_frame, GOODIX52XD_WIDTH,
+                                   GOODIX52XD_HEIGHT, GOODIX52XD_MATCH_THRESHOLD);
+    fp_dbg("correlation %.3f, threshold %.2f", score, GOODIX52XD_MATCH_THRESHOLD);
+
+    return score >= GOODIX52XD_MATCH_THRESHOLD ? FPI_MATCH_SUCCESS : FPI_MATCH_FAIL;
+}
+
+// ---- MATCH SECTION END ----
+
 static void fpi_device_goodixtls52xd_init(FpiDeviceGoodixTls52XD* self)
 {
     self->frames = g_slist_alloc();
@@ -903,6 +997,12 @@ static void fpi_device_goodixtls52xd_class_init(
   img_dev_class->activate = dev_activate;
   img_dev_class->change_state = dev_change_state;
   img_dev_class->deactivate = dev_deactivate;
+
+  // NBIS finds too few minutiae in a 64x80 window; match images instead,
+  // and enroll more presses so more of the finger is covered.
+  img_dev_class->image_to_sample = dev_image_to_sample;
+  img_dev_class->match_samples = dev_match_samples;
+  dev_class->nr_enroll_stages = 12;
 
   fpi_device_class_auto_initialize_features(dev_class);
 }
