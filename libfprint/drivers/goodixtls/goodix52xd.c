@@ -62,6 +62,12 @@ struct _FpiDeviceGoodixTls52XD {
   GSList* frames;
 
   Goodix52xdPix empty_img[GOODIX52XD_FRAME_SIZE];
+
+  // Set while deactivating, so the finger-off poll stops
+  gboolean deactivating;
+
+  // Consecutive empty frames seen while waiting for the finger to lift
+  guint off_frames;
 };
 
 G_DECLARE_FINAL_TYPE(FpiDeviceGoodixTls52XD, fpi_device_goodixtls52xd, FPI,
@@ -349,6 +355,9 @@ enum SCAN_STAGES {
     SCAN_STAGE_SWITCH_TO_FDT_DOWN,
     SCAN_STAGE_SWITCH_TO_FDT_MODE,
     SCAN_STAGE_GET_IMG,
+    SCAN_STAGE_OFF_DELAY,
+    SCAN_STAGE_OFF_FDT_MODE,
+    SCAN_STAGE_OFF_GET_IMG,
 
     SCAN_STAGE_NUM,
 };
@@ -497,6 +506,29 @@ static void save_frame(FpiDeviceGoodixTls52XD* self, guint8* raw)
     self->frames = g_slist_append(self->frames, frame);
 }
 
+// With no finger on the sensor, frames come back (nearly) saturated: their
+// mean is around 3900 of 4095, against 1200-1700 with a finger. A finger
+// that is being lifted can briefly read in between, so require several
+// empty frames in a row before reporting it gone.
+#define GOODIX52XD_FINGER_OFF_MEAN 3500
+#define GOODIX52XD_FINGER_OFF_FRAMES 3
+#define GOODIX52XD_FINGER_OFF_POLL_MS 100
+
+// Mean of the live (non-zero) pixels of a raw frame
+static guint frame_mean(const Goodix52xdPix* frame)
+{
+    guint64 sum = 0;
+    guint live = 0;
+
+    for (int i = 0; i < GOODIX52XD_FRAME_SIZE; i++) {
+        if (frame[i] > 0) {
+            sum += frame[i];
+            live++;
+        }
+    }
+    return live ? sum / live : 0;
+}
+
 static void scan_on_read_img(FpDevice* dev, guint8* data, guint16 len,
                              gpointer ssm, GError* err)
 {
@@ -508,6 +540,23 @@ static void scan_on_read_img(FpDevice* dev, guint8* data, guint16 len,
 
     FpiDeviceGoodixTls52XD* self = FPI_DEVICE_GOODIXTLS52XD(dev);
     save_frame(self, data);
+
+    // Finger detection sometimes fires with nothing on the sensor (seen right
+    // after re-arming). An empty first frame cannot be a press: re-arm.
+    if (g_slist_length(self->frames) == 2) {
+        guint mean = frame_mean(g_slist_last(self->frames)->data);
+
+        if (mean >= GOODIX52XD_FINGER_OFF_MEAN) {
+            fp_dbg("ignoring finger detection, first frame is empty (mean %u)", mean);
+            g_slist_free_full(self->frames, g_free);
+            self->frames = g_slist_alloc();
+            fpi_ssm_jump_to_state_delayed(ssm, SCAN_STAGE_SWITCH_TO_FDT_DOWN,
+                                          GOODIX52XD_FINGER_OFF_POLL_MS);
+            return;
+        }
+        fpi_image_device_report_finger_status(FP_IMAGE_DEVICE(dev), TRUE);
+    }
+
     if (g_slist_length(self->frames) <= GOODIX52XD_CAP_FRAMES) {
         fpi_ssm_jump_to_state(ssm, SCAN_STAGE_SWITCH_TO_FDT_MODE);
     }
@@ -544,10 +593,10 @@ static void scan_on_read_img(FpDevice* dev, guint8* data, guint16 len,
 
         fpi_image_device_image_captured(img_dev, img);
 
-
-        fpi_image_device_report_finger_status(img_dev, FALSE);
-
-        fpi_ssm_next_state(ssm);
+        // Do not report the finger as gone until it actually is, or the next
+        // capture starts on the same press.
+        self->off_frames = 0;
+        fpi_ssm_jump_to_state(ssm, SCAN_STAGE_OFF_DELAY);
     }
 }
 
@@ -600,6 +649,48 @@ static void scan_get_img(FpDevice* dev, FpiSsm* ssm)
     goodix_tls_read_image(dev, payload, sizeof(payload), scan_on_read_img, ssm);
 }
 
+
+static void scan_on_read_off_img(FpDevice* dev, guint8* data, guint16 len,
+                                 gpointer ssm, GError* err)
+{
+    FpiDeviceGoodixTls52XD* self = FPI_DEVICE_GOODIXTLS52XD(dev);
+    Goodix52xdPix frame[GOODIX52XD_FRAME_SIZE];
+    guint mean;
+
+    if (err) {
+        fpi_ssm_mark_failed(ssm, err);
+        return;
+    }
+
+    decode_frame(frame, data);
+    mean = frame_mean(frame);
+    fp_dbg("finger-off check: frame mean %u", mean);
+
+    if (mean >= GOODIX52XD_FINGER_OFF_MEAN)
+        self->off_frames++;
+    else
+        self->off_frames = 0;
+
+    if (self->off_frames >= GOODIX52XD_FINGER_OFF_FRAMES) {
+        fpi_image_device_report_finger_status(FP_IMAGE_DEVICE(dev), FALSE);
+        fpi_ssm_mark_completed(ssm);
+        return;
+    }
+    fpi_ssm_jump_to_state(ssm, SCAN_STAGE_OFF_DELAY);
+}
+
+static void off_write_sensor_complete(FpDevice* dev, gpointer user_data, GError* error)
+{
+    FpiDeviceGoodixTls52XD* self = FPI_DEVICE_GOODIXTLS52XD(dev);
+    guint8 payload[] = {0x43, 0x03, self->otp[26] + 6, 0x00, self->otp[26], 0x00, self->otp[45] + 6, 0x00, self->otp[45], 0x00};
+
+    if (error) {
+        fpi_ssm_mark_failed(user_data, error);
+        return;
+    }
+    goodix_tls_read_image(dev, payload, sizeof(payload), scan_on_read_off_img, user_data);
+}
+
 const guint8 fdt_switch_state_mode_52xd[] = {
     0x0d, 0x01, 0x27, 0x01, 0x21, 0x01, 0x27,
     0x01, 0x23, 0x01, 0x8d, 0x8d, 0x86, 0x86,
@@ -623,13 +714,34 @@ static void scan_run_state(FpiSsm* ssm, FpDevice* dev)
 
     switch (fpi_ssm_get_cur_state(ssm)) {
 
+    case SCAN_STAGE_OFF_FDT_MODE:
+        if (self->deactivating) {
+            fpi_ssm_mark_completed(ssm);
+            break;
+        }
+        /* fall through */
     case SCAN_STAGE_SWITCH_TO_FDT_MODE:
         goodix_send_mcu_switch_to_fdt_mode(dev, (guint8*) fdt_switch_state_mode_52xd,
                                            sizeof(fdt_switch_state_mode_52xd), FALSE, NULL,
                                            check_none_cmd, ssm);
         break;
 
+    case SCAN_STAGE_OFF_DELAY:
+        if (self->deactivating)
+            fpi_ssm_mark_completed(ssm);
+        else
+            fpi_ssm_next_state_delayed(ssm, GOODIX52XD_FINGER_OFF_POLL_MS);
+        break;
+
+    case SCAN_STAGE_OFF_GET_IMG:
+        goodix_send_write_sensor_register(dev, 556, 0x0305, off_write_sensor_complete, ssm);
+        break;
+
     case SCAN_STAGE_SWITCH_TO_FDT_DOWN:
+        if (self->deactivating) {
+            fpi_ssm_mark_completed(ssm);
+            break;
+        }
         // FDT Down Cali
         fdt_switch_state_down_52xd[2] = self->otp[33];
         fdt_switch_state_down_52xd[4] = self->otp[41];
@@ -651,7 +763,6 @@ static void scan_run_state(FpiSsm* ssm, FpDevice* dev)
                                            receive_fdt_down_ack, ssm);
         break;
     case SCAN_STAGE_GET_IMG:
-        fpi_image_device_report_finger_status(img_dev, TRUE);
         // Register 0x022c = 0x0305, sent as bytes 05 03 like goodix-fp-dump
         guint16 payload = 0x0305;
         goodix_send_write_sensor_register(dev, 556, payload, write_sensor_complete, ssm);
@@ -728,6 +839,8 @@ static void dev_deinit(FpImageDevice *img_dev) {
 static void dev_activate(FpImageDevice *img_dev) {
     FpDevice* dev = FP_DEVICE(img_dev);
 
+    FPI_DEVICE_GOODIXTLS52XD(img_dev)->deactivating = FALSE;
+
     fpi_ssm_start(fpi_ssm_new(dev, activate_run_state, ACTIVATE_NUM_STATES),
                   activate_complete);
 }
@@ -748,6 +861,7 @@ static void goodix52xd_reset_state(FpiDeviceGoodixTls52XD* self) {}
 
 static void dev_deactivate(FpImageDevice *img_dev) {
     FpDevice* dev = FP_DEVICE(img_dev);
+    FPI_DEVICE_GOODIXTLS52XD(img_dev)->deactivating = TRUE;
     goodix_reset_state(dev);
     GError* error = NULL;
     goodix_shutdown_tls(dev, &error);
