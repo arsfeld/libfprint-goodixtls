@@ -32,6 +32,15 @@
 > - Fixed an unrelated upstream bug: `v1.94.100` cannot configure with
 >   `-Dintrospection=false`, because `tests/meson.build` iterates a dict with a
 >   single loop variable.
+> - **`goodixtls52xd` requests the full 64-byte OTP.** The OTP request's
+>   payload is a little-endian byte count, but it was sent as a single byte;
+>   521d firmware honours the count and returned nothing.
+> - **`goodixtls52xd` averages its frames** instead of running them through
+>   swipe-sensor assembly, which smeared a stationary press into an
+>   unmatchable strip.
+> - **`goodixtls52xd` writes `0x0305` to sensor register `556`** (`0x022c`),
+>   as `goodix-fp-dump` does, instead of the `0x0005` a scalar initializer
+>   produced. Tested on a 27c6:521d.
 >
 > ### Status — read before relying on this
 >
@@ -42,11 +51,19 @@
 >   and expect that PSK to be all zero bytes.** Anyone with brief physical
 >   access to the USB device can therefore capture the image stream. Weigh that
 >   before wiring fingerprint auth into `sudo` or `polkit`.
-> - Known unfixed bug, inherited and left alone deliberately: in `goodix52xd.c`
->   and `goodix53xd.c`, `guint16 payload = {0x05, 0x03};` initializes a *scalar*
->   from a braced list, so it is `0x0005` and the `0x03` is silently dropped.
->   Fixing it would change what is written to sensor register `556`, which needs
->   testing against real hardware first.
+> - Known unfixed bug, inherited and left alone deliberately: in `goodix53xd.c`,
+>   `guint16 payload = {0x05, 0x03};` initializes a *scalar* from a braced
+>   list, so it is `0x0005` and the `0x03` is silently dropped. Fixing it would
+>   change what is written to sensor register `556`, which needs testing
+>   against 27c6:538d hardware first. (`goodix52xd.c` is fixed.)
+> - **On 27c6:521d, enrollment completes but verification does not match.**
+>   The sensor window is 64x80 px (roughly 3x4 mm), and the captured frames
+>   do show clear ridges, but NBIS finds only 0-8 minutiae per image and
+>   bozorth3 scores 0/24 between presses of the same finger. This is a
+>   matcher limitation, not a capture one. In offline tests on one person
+>   (~60 presses), direct image correlation separated a thumb from index and
+>   middle fingers at ~4% equal error rate, but from the other thumb only at
+>   ~15% -- not enough to be used as a lock.
 > - Not upstreamable as-is, and not submitted. No support is offered.
 >
 > ### Building just this driver
