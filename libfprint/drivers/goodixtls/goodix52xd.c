@@ -363,13 +363,6 @@ static void check_none_cmd(FpDevice* dev, guint8* data, guint16 len,
     fpi_ssm_next_state(ssm);
 }
 
-static unsigned char get_pix(struct fpi_frame_asmbl_ctx* ctx,
-                             struct fpi_frame* frame, unsigned int x,
-                             unsigned int y)
-{
-    return frame->data[x + y * GOODIX52XD_WIDTH];
-}
-
 // Bitdepth is 12, but we have to fit it in a byte
 static unsigned char squash(int v) { return v / 16; }
 
@@ -522,11 +515,6 @@ static void scan_on_read_img(FpDevice* dev, guint8* data, guint16 len,
         GSList* raw_frames = g_slist_nth(self->frames, 1);
 
         FpImageDevice* img_dev = FP_IMAGE_DEVICE(dev);
-        struct fpi_frame_asmbl_ctx assembly_ctx;
-        assembly_ctx.frame_width = GOODIX52XD_WIDTH;
-        assembly_ctx.frame_height = GOODIX52XD_HEIGHT;
-        assembly_ctx.image_width = GOODIX52XD_WIDTH*3;
-        assembly_ctx.get_pixel = get_pix;
 
         GSList* frames = NULL;
         frame_processing_info pinfo = {.dev = self, .frames = &frames};
@@ -534,8 +522,21 @@ static void scan_on_read_img(FpDevice* dev, guint8* data, guint16 len,
         g_slist_foreach(raw_frames, (GFunc) process_frame, &pinfo);
         frames = g_slist_reverse(frames);
 
-        fpi_do_movement_estimation(&assembly_ctx, frames);
-        FpImage* img = fpi_assemble_frames(&assembly_ctx, frames);
+        /* The 521d is a static press sensor, not a swipe sensor: the captured
+         * frames all show a stationary finger. Swipe-style movement estimation
+         * hallucinates motion and smears them into an unmatchable strip, so
+         * average the frames into a single clean press image instead. */
+        FpImage* img = fp_image_new(GOODIX52XD_WIDTH, GOODIX52XD_HEIGHT);
+        {
+            guint nframes = g_slist_length(frames);
+            gsize npix = (gsize) GOODIX52XD_WIDTH * GOODIX52XD_HEIGHT;
+            for (gsize i = 0; i < npix; i++) {
+                guint sum = 0;
+                for (GSList *l = frames; l; l = l->next)
+                    sum += ((struct fpi_frame *) l->data)->data[i];
+                img->data[i] = (guint8) (sum / nframes);
+            }
+        }
 
         g_slist_free_full(frames, g_free);
         g_slist_free_full(self->frames, g_free);
