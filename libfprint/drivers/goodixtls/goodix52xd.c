@@ -652,7 +652,8 @@ static void scan_run_state(FpiSsm* ssm, FpDevice* dev)
         break;
     case SCAN_STAGE_GET_IMG:
         fpi_image_device_report_finger_status(img_dev, TRUE);
-        guint16 payload = {0x05, 0x03};
+        // Register 0x022c = 0x0305, sent as bytes 05 03 like goodix-fp-dump
+        guint16 payload = 0x0305;
         goodix_send_write_sensor_register(dev, 556, payload, write_sensor_complete, ssm);
         break;
     }
