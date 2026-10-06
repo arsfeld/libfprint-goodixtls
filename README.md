@@ -41,6 +41,14 @@
 > - **`goodixtls52xd` writes `0x0305` to sensor register `556`** (`0x022c`),
 >   as `goodix-fp-dump` does, instead of the `0x0005` a scalar initializer
 >   produced. Tested on a 27c6:521d.
+> - **`goodixtls52xd` waits for the finger to lift** before the next capture
+>   (frames read nearly saturated once the sensor is empty), and ignores
+>   finger detections whose first frame is empty. Previously one press could
+>   run through a whole enrollment.
+> - **`goodixtls52xd` matches by image correlation instead of NBIS**, through
+>   two new optional `FpImageDeviceClass` vfuncs (`image_to_sample`,
+>   `match_samples`). Drivers that do not set them are unaffected. Enrollment
+>   takes 12 presses.
 >
 > ### Status — read before relying on this
 >
@@ -56,14 +64,15 @@
 >   list, so it is `0x0005` and the `0x03` is silently dropped. Fixing it would
 >   change what is written to sensor register `556`, which needs testing
 >   against 27c6:538d hardware first. (`goodix52xd.c` is fixed.)
-> - **On 27c6:521d, enrollment completes but verification does not match.**
->   The sensor window is 64x80 px (roughly 3x4 mm), and the captured frames
->   do show clear ridges, but NBIS finds only 0-8 minutiae per image and
->   bozorth3 scores 0/24 between presses of the same finger. This is a
->   matcher limitation, not a capture one. In offline tests on one person
->   (~60 presses), direct image correlation separated a thumb from index and
->   middle fingers at ~4% equal error rate, but from the other thumb only at
->   ~15% -- not enough to be used as a lock.
+> - **On 27c6:521d, fingerprint verification works, but it is
+>   convenience-level, not a lock.** The sensor window is 64x80 px (roughly
+>   3x4 mm): too small for NBIS (0-8 minutiae per image, bozorth3 scores 0/24),
+>   so the driver matches images directly. Measured offline on one person
+>   (79 presses over two days, 12 enrolled presses): roughly 1 in 4 genuine
+>   presses is rejected after a real, consecutive enrollment; about 4% of
+>   index/middle finger presses and about 15% of the *other thumb's* presses
+>   are accepted. Another person's thumb should be assumed to have a similar
+>   chance. Vary the finger position across the 12 enrollment presses.
 > - Not upstreamable as-is, and not submitted. No support is offered.
 >
 > ### Building just this driver
