@@ -32,6 +32,23 @@
 > - Fixed an unrelated upstream bug: `v1.94.100` cannot configure with
 >   `-Dintrospection=false`, because `tests/meson.build` iterates a dict with a
 >   single loop variable.
+> - **`goodixtls52xd` requests the full 64-byte OTP.** The OTP request's
+>   payload is a little-endian byte count, but it was sent as a single byte;
+>   521d firmware honours the count and returned nothing.
+> - **`goodixtls52xd` averages its frames** instead of running them through
+>   swipe-sensor assembly, which smeared a stationary press into an
+>   unmatchable strip.
+> - **`goodixtls52xd` writes `0x0305` to sensor register `556`** (`0x022c`),
+>   as `goodix-fp-dump` does, instead of the `0x0005` a scalar initializer
+>   produced. Tested on a 27c6:521d.
+> - **`goodixtls52xd` waits for the finger to lift** before the next capture
+>   (frames read nearly saturated once the sensor is empty), and ignores
+>   finger detections whose first frame is empty. Previously one press could
+>   run through a whole enrollment.
+> - **`goodixtls52xd` matches by image correlation instead of NBIS**, through
+>   two new optional `FpImageDeviceClass` vfuncs (`image_to_sample`,
+>   `match_samples`). Drivers that do not set them are unaffected. Enrollment
+>   takes 8 presses.
 >
 > ### Status — read before relying on this
 >
@@ -42,11 +59,20 @@
 >   and expect that PSK to be all zero bytes.** Anyone with brief physical
 >   access to the USB device can therefore capture the image stream. Weigh that
 >   before wiring fingerprint auth into `sudo` or `polkit`.
-> - Known unfixed bug, inherited and left alone deliberately: in `goodix52xd.c`
->   and `goodix53xd.c`, `guint16 payload = {0x05, 0x03};` initializes a *scalar*
->   from a braced list, so it is `0x0005` and the `0x03` is silently dropped.
->   Fixing it would change what is written to sensor register `556`, which needs
->   testing against real hardware first.
+> - Known unfixed bug, inherited and left alone deliberately: in `goodix53xd.c`,
+>   `guint16 payload = {0x05, 0x03};` initializes a *scalar* from a braced
+>   list, so it is `0x0005` and the `0x03` is silently dropped. Fixing it would
+>   change what is written to sensor register `556`, which needs testing
+>   against 27c6:538d hardware first. (`goodix52xd.c` is fixed.)
+> - **On 27c6:521d, fingerprint verification works, but it is
+>   convenience-level, not a lock.** The sensor window is 64x80 px (roughly
+>   3x4 mm): too small for NBIS (0-8 minutiae per image, bozorth3 scores 0/24),
+>   so the driver matches images directly. Measured offline on one person
+>   (79 presses over two days, 8 consecutive enrolled presses): roughly 1 in
+>   5 genuine presses is rejected; no index or middle finger press was
+>   accepted, but about 18% of the *other thumb's* presses were. Another
+>   person's thumb should be assumed to have a similar chance. Vary the
+>   finger position across the 8 enrollment presses.
 > - Not upstreamable as-is, and not submitted. No support is offered.
 >
 > ### Building just this driver
