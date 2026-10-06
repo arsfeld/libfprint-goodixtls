@@ -929,6 +929,8 @@ void goodix_send_tls_successfully_established(FpDevice *dev,
                        GOODIX_TIMEOUT, FALSE, NULL, NULL);
 }
 
+// Note: payload is a scalar, so only 0x40 is sent (a one-byte payload).
+// goodix511 and goodix53xd still use this; see goodix_send_read_otp_len().
 void goodix_send_read_otp(FpDevice* dev, GoodixDefaultCallback callback,
                           gpointer user_data)
 {
@@ -948,6 +950,32 @@ void goodix_send_read_otp(FpDevice* dev, GoodixDefaultCallback callback,
     }
 
     goodix_send_protocol(dev, GOODIX_CMD_READ_OTP, (guint8*) &payload,
+                         sizeof(payload), NULL, TRUE, GOODIX_TIMEOUT, TRUE,
+                         NULL, NULL);
+}
+
+// The OTP request payload is the number of bytes to read, as a little-endian
+// u16. Newer firmware honours it and returns nothing for a zero length.
+void goodix_send_read_otp_len(FpDevice* dev, guint16 length,
+                              GoodixDefaultCallback callback,
+                              gpointer user_data)
+{
+    guint8 payload[] = {length & 0xff, length >> 8};
+    GoodixCallbackInfo* cb_info;
+
+    if (callback) {
+        cb_info = malloc(sizeof(GoodixCallbackInfo));
+
+        cb_info->callback = G_CALLBACK(callback);
+        cb_info->user_data = user_data;
+
+        goodix_send_protocol(dev, GOODIX_CMD_READ_OTP, payload,
+                             sizeof(payload), NULL, TRUE, GOODIX_TIMEOUT, TRUE,
+                             goodix_receive_default, cb_info);
+        return;
+    }
+
+    goodix_send_protocol(dev, GOODIX_CMD_READ_OTP, payload,
                          sizeof(payload), NULL, TRUE, GOODIX_TIMEOUT, TRUE,
                          NULL, NULL);
 }

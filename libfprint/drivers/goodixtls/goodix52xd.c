@@ -300,7 +300,7 @@ static void activate_run_state(FpiSsm* ssm, FpDevice* dev)
       break;
 
     case ACTIVATE_OTP:
-      goodix_send_read_otp(dev, read_otp_callback, ssm);
+      goodix_send_read_otp_len(dev, 64, read_otp_callback, ssm);
       break;
 
     case ACTIVATE_SET_MCU_IDLE:

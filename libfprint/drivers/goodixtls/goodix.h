@@ -217,6 +217,10 @@ void goodix_send_preset_psk_read(FpDevice *dev, guint32 flags, guint16 length,
 void goodix_send_read_otp(FpDevice* dev, GoodixDefaultCallback callback,
                           gpointer user_data);
 
+void goodix_send_read_otp_len(FpDevice* dev, guint16 length,
+                              GoodixDefaultCallback callback,
+                              gpointer user_data);
+
 // ---- GOODIX SEND SECTION END ----
 
 // -----------------------------------------------------------------------------
