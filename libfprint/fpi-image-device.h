@@ -20,6 +20,7 @@
 #pragma once
 
 #include "fpi-device.h"
+#include "fpi-print.h"
 #include "fp-image-device.h"
 
 /**
@@ -84,6 +85,13 @@ typedef enum {
  * @change_state: Notification about the current device state (i.e. waiting for
  *   finger or image capture). Implementing this is optional, it can e.g. be
  *   used to flash an LED when waiting for a finger.
+ * @image_to_sample: Optional. Turn a captured image into a driver specific
+ *   sample. If set, images are not passed to NBIS: prints are of type
+ *   #FPI_PRINT_RAW and hold an "av" array of samples as their fpi-data.
+ *   Must be set together with @match_samples.
+ * @match_samples: Optional. Compare a probe sample (as returned by
+ *   @image_to_sample) against the "av" array of samples of an enrolled
+ *   print, and return whether they match.
  *
  * These are the main entry points for drivers to implement. Drivers may not
  * implement all of these entry points if they do not support the operation
@@ -114,6 +122,14 @@ struct _FpImageDeviceClass
   void          (*change_state) (FpImageDevice      *dev,
                                  FpiImageDeviceState state);
   void          (*deactivate)   (FpImageDevice *dev);
+
+  GVariant *     (*image_to_sample) (FpImageDevice *dev,
+                                     FpImage       *image,
+                                     GError       **error);
+  FpiMatchResult (*match_samples)   (FpImageDevice *dev,
+                                     GVariant      *enrolled,
+                                     GVariant      *probe,
+                                     GError       **error);
 };
 
 void fpi_image_device_set_bz3_threshold (FpImageDevice *self,
